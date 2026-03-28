@@ -78,6 +78,36 @@
                                         {{ $product->is_featured ? 'Unfeature' : 'Feature' }}
                                     </button>
                                 </form>
+                                <details class="text-left">
+                                    <summary class="cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Edit Inputs</summary>
+                                    <form action="{{ route('admin.products.inputs', $product) }}" method="POST" class="mt-3 w-[26rem] max-w-[80vw] space-y-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                                        @csrf
+                                        @method('PATCH')
+                                        <div class="grid gap-2 sm:grid-cols-2">
+                                            <input name="name" value="{{ old('name', $product->name) }}" placeholder="Name" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input name="sku" value="{{ old('sku', $product->sku) }}" placeholder="SKU" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <select name="category_id" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                                @foreach($categories as $category)
+                                                    <option value="{{ $category->id }}" @selected((int) old('category_id', $product->category_id) === (int) $category->id)>{{ $category->name }}</option>
+                                                @endforeach
+                                            </select>
+                                            <select name="product_type" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                                @foreach(['physical','service','digital'] as $type)
+                                                    <option value="{{ $type }}" @selected(old('product_type', $product->product_type) === $type)>{{ ucfirst($type) }}</option>
+                                                @endforeach
+                                            </select>
+                                            <input type="number" step="0.01" min="0" name="price" value="{{ old('price', $product->price) }}" placeholder="Price" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input type="number" step="0.01" min="0" name="compare_at_price" value="{{ old('compare_at_price', $product->compare_at_price) }}" placeholder="Compare Price" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input name="currency" value="{{ old('currency', $product->currency) }}" placeholder="Currency" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input type="number" min="0" name="inventory" value="{{ old('inventory', $product->inventory) }}" placeholder="Inventory" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input name="crop_type" value="{{ old('crop_type', $product->crop_type) }}" placeholder="Crop Type" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                            <input name="region" value="{{ old('region', $product->region) }}" placeholder="Region" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                        </div>
+                                        <input name="short_description" value="{{ old('short_description', $product->short_description) }}" placeholder="Short description" class="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                                        <textarea name="description" rows="3" placeholder="Description" class="w-full rounded-lg border border-slate-200 px-2 py-1 text-xs">{{ old('description', $product->description) }}</textarea>
+                                        <button class="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white">Save Inputs</button>
+                                    </form>
+                                </details>
                             </div>
                         </td>
                     </tr>

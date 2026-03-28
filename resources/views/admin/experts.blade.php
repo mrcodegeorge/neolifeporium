@@ -48,6 +48,24 @@
                     <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{{ (int) $expert->experience_years }} years experience</span>
                     <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">GHS {{ number_format((float) $expert->hourly_rate, 2) }}/session</span>
                 </div>
+                <details class="mt-4">
+                    <summary class="cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Edit Expert Inputs</summary>
+                    <form action="{{ route('admin.experts.inputs', $expert) }}" method="POST" class="mt-3 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+                        @csrf
+                        @method('PATCH')
+                        <input name="specialty" value="{{ old('specialty', $expert->specialty) }}" placeholder="Specialty" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="experience_years" type="number" min="0" max="80" value="{{ old('experience_years', $expert->experience_years) }}" placeholder="Experience years" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="hourly_rate" type="number" min="0" step="0.01" value="{{ old('hourly_rate', $expert->hourly_rate) }}" placeholder="Hourly rate" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="regions_served_text" value="{{ old('regions_served_text', collect($expert->regions_served)->implode(', ')) }}" placeholder="Regions served" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <label class="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                            <input type="checkbox" name="is_available" value="1" @checked(old('is_available', $expert->is_available))>
+                            Available for bookings
+                        </label>
+                        <div></div>
+                        <textarea name="bio" rows="3" placeholder="Bio" class="sm:col-span-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">{{ old('bio', $expert->bio) }}</textarea>
+                        <button class="sm:col-span-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white">Save Expert Inputs</button>
+                    </form>
+                </details>
             </article>
         @empty
             <div class="rounded-3xl bg-white p-8 text-center text-slate-500 shadow-lg shadow-black/5">

@@ -18,6 +18,8 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
+use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\View\View;
@@ -116,9 +118,14 @@ class AdminManagementController extends Controller
             ->latest()
             ->paginate(20)
             ->withQueryString();
+        $categories = \App\Models\Category::query()
+            ->where('is_active', true)
+            ->orderBy('name')
+            ->get(['id', 'name']);
 
         return view('admin.products', [
             'products' => $products,
+            'categories' => $categories,
             'filters' => [
                 'search' => $search,
                 'status' => $status,
@@ -213,6 +220,39 @@ class AdminManagementController extends Controller
         return back()->with('status', 'Product moderation updated.');
     }
 
+    public function updateProductInputs(Request $request, Product $product): RedirectResponse
+    {
+        $payload = $request->validate([
+            'name' => ['required', 'string', 'max:190'],
+            'sku' => ['required', 'string', 'max:120', Rule::unique('products', 'sku')->ignore($product->id)],
+            'category_id' => ['required', 'integer', 'exists:categories,id'],
+            'product_type' => ['required', 'in:physical,service,digital'],
+            'price' => ['required', 'numeric', 'min:0'],
+            'compare_at_price' => ['nullable', 'numeric', 'min:0'],
+            'currency' => ['required', 'string', 'max:10'],
+            'inventory' => ['required', 'integer', 'min:0'],
+            'crop_type' => ['nullable', 'string', 'max:120'],
+            'region' => ['nullable', 'string', 'max:120'],
+            'short_description' => ['nullable', 'string', 'max:255'],
+            'description' => ['required', 'string', 'max:2000'],
+        ]);
+
+        $slug = Str::slug($payload['name']);
+        $originalSlug = $slug;
+        $suffix = 1;
+        while (Product::query()->where('slug', $slug)->whereKeyNot($product->id)->exists()) {
+            $slug = "{$originalSlug}-{$suffix}";
+            $suffix++;
+        }
+
+        $product->update([
+            ...$payload,
+            'slug' => $slug,
+        ]);
+
+        return back()->with('status', 'Product details updated successfully.');
+    }
+
     public function toggleFeaturedProduct(Product $product): RedirectResponse
     {
         $product->update(['is_featured' => ! $product->is_featured]);
@@ -293,6 +333,80 @@ class AdminManagementController extends Controller
         }, $filename, [
             'Content-Type' => 'text/csv',
         ]);
+    }
+
+    public function exportUsersCsv(Request $request): StreamedResponse
+    {
+        $to = $request->filled('to') ? Carbon::parse((string) $request->string('to'))->endOfDay() : now()->endOfDay();
+        $from = $request->filled('from') ? Carbon::parse((string) $request->string('from'))->startOfDay() : $to->copy()->subDays(30)->startOfDay();
+
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
+        }
+
+        $users = User::query()
+            ->with('roles')
+            ->whereBetween('created_at', [$from, $to])
+            ->latest()
+            ->get();
+
+        $filename = 'users_export_'.$from->format('Ymd').'_to_'.$to->format('Ymd').'.csv';
+
+        return response()->streamDownload(function () use ($users): void {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, ['ID', 'Name', 'Email', 'Phone', 'Status', 'Roles', 'Created At']);
+
+            foreach ($users as $user) {
+                fputcsv($handle, [
+                    $user->id,
+                    $user->name,
+                    $user->email,
+                    $user->phone,
+                    $user->status,
+                    $user->roles->pluck('slug')->implode('|'),
+                    $user->created_at?->format('Y-m-d H:i:s'),
+                ]);
+            }
+
+            fclose($handle);
+        }, $filename, ['Content-Type' => 'text/csv']);
+    }
+
+    public function exportPaymentsCsv(Request $request): StreamedResponse
+    {
+        $to = $request->filled('to') ? Carbon::parse((string) $request->string('to'))->endOfDay() : now()->endOfDay();
+        $from = $request->filled('from') ? Carbon::parse((string) $request->string('from'))->startOfDay() : $to->copy()->subDays(30)->startOfDay();
+
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->endOfDay()];
+        }
+
+        $payments = Payment::query()
+            ->with('user')
+            ->whereBetween('created_at', [$from, $to])
+            ->latest()
+            ->get();
+
+        $filename = 'payments_export_'.$from->format('Ymd').'_to_'.$to->format('Ymd').'.csv';
+
+        return response()->streamDownload(function () use ($payments): void {
+            $handle = fopen('php://output', 'w');
+            fputcsv($handle, ['Reference', 'User', 'Provider', 'Amount', 'Status', 'Verified At', 'Created At']);
+
+            foreach ($payments as $payment) {
+                fputcsv($handle, [
+                    $payment->provider_reference,
+                    $payment->user?->name,
+                    strtoupper((string) $payment->provider),
+                    $payment->amount,
+                    $payment->status,
+                    $payment->verified_at?->format('Y-m-d H:i:s'),
+                    $payment->created_at?->format('Y-m-d H:i:s'),
+                ]);
+            }
+
+            fclose($handle);
+        }, $filename, ['Content-Type' => 'text/csv']);
     }
 
     public function impersonate(User $user): RedirectResponse
@@ -401,5 +515,79 @@ class AdminManagementController extends Controller
         }
 
         return back()->with('status', 'Automation rules updated.');
+    }
+
+    public function updateVendorInputs(Request $request, VendorProfile $vendorProfile): RedirectResponse
+    {
+        $payload = $request->validate([
+            'business_name' => ['required', 'string', 'max:190'],
+            'business_type' => ['nullable', 'string', 'max:120'],
+            'product_category' => ['nullable', 'string', 'max:120'],
+            'description' => ['nullable', 'string', 'max:2000'],
+            'region' => ['nullable', 'string', 'max:120'],
+            'district' => ['nullable', 'string', 'max:120'],
+            'commission_rate' => ['required', 'numeric', 'min:0', 'max:100'],
+        ]);
+
+        $vendorProfile->update($payload);
+
+        return back()->with('status', 'Vendor profile inputs updated.');
+    }
+
+    public function updateExpertInputs(Request $request, AgronomistProfile $agronomistProfile): RedirectResponse
+    {
+        $payload = $request->validate([
+            'specialty' => ['required', 'string', 'max:150'],
+            'experience_years' => ['nullable', 'integer', 'min:0', 'max:80'],
+            'bio' => ['nullable', 'string', 'max:3000'],
+            'hourly_rate' => ['required', 'numeric', 'min:0'],
+            'regions_served_text' => ['nullable', 'string', 'max:500'],
+            'is_available' => ['nullable', 'boolean'],
+        ]);
+
+        $regions = collect(explode(',', (string) ($payload['regions_served_text'] ?? '')))
+            ->map(fn (string $item) => trim($item))
+            ->filter()
+            ->values()
+            ->all();
+
+        $agronomistProfile->update([
+            'specialty' => $payload['specialty'],
+            'experience_years' => $payload['experience_years'] ?? null,
+            'bio' => $payload['bio'] ?? null,
+            'hourly_rate' => $payload['hourly_rate'],
+            'regions_served' => $regions,
+            'is_available' => (bool) ($payload['is_available'] ?? false),
+        ]);
+
+        return back()->with('status', 'Expert profile inputs updated.');
+    }
+
+    public function updateReportSchedule(Request $request): RedirectResponse
+    {
+        $payload = $request->validate([
+            'frequency' => ['required', 'string', 'in:weekly,monthly'],
+            'delivery_channel' => ['required', 'string', 'in:email,in_app'],
+            'recipient_email' => ['nullable', 'email', 'max:190'],
+            'enabled' => ['nullable', 'boolean'],
+        ]);
+
+        $enabled = (bool) ($payload['enabled'] ?? false);
+
+        $config = [
+            'frequency' => $payload['frequency'],
+            'delivery_channel' => $payload['delivery_channel'],
+            'recipient_email' => $payload['recipient_email'] ?? null,
+            'enabled' => $enabled,
+            'updated_by' => auth()->id(),
+            'updated_at' => now()->toDateTimeString(),
+        ];
+
+        Setting::query()->updateOrCreate(
+            ['group' => 'reporting', 'key' => 'schedule'],
+            ['value' => json_encode($config)]
+        );
+
+        return back()->with('status', 'Report schedule updated.');
     }
 }

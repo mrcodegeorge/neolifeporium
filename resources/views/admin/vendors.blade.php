@@ -55,6 +55,21 @@
                     <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Commission {{ number_format($vendor->commission_rate, 2) }}%</span>
                     <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">Submitted {{ $vendor->created_at?->diffForHumans() }}</span>
                 </div>
+                <details class="mt-4">
+                    <summary class="cursor-pointer rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700">Edit Vendor Inputs</summary>
+                    <form action="{{ route('admin.vendors.inputs', $vendor) }}" method="POST" class="mt-3 grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
+                        @csrf
+                        @method('PATCH')
+                        <input name="business_name" value="{{ old('business_name', $vendor->business_name) }}" placeholder="Business name" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="business_type" value="{{ old('business_type', $vendor->business_type) }}" placeholder="Business type" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="product_category" value="{{ old('product_category', $vendor->product_category) }}" placeholder="Product category" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="commission_rate" type="number" min="0" max="100" step="0.01" value="{{ old('commission_rate', $vendor->commission_rate) }}" placeholder="Commission rate" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="region" value="{{ old('region', $vendor->region) }}" placeholder="Region" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <input name="district" value="{{ old('district', $vendor->district) }}" placeholder="District" class="rounded-lg border border-slate-200 px-2 py-1 text-xs">
+                        <textarea name="description" rows="3" placeholder="Description" class="sm:col-span-2 rounded-lg border border-slate-200 px-2 py-1 text-xs">{{ old('description', $vendor->description) }}</textarea>
+                        <button class="sm:col-span-2 rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white">Save Vendor Inputs</button>
+                    </form>
+                </details>
             </article>
         @empty
             <div class="rounded-3xl bg-white p-8 text-center text-slate-500 shadow-lg shadow-black/5">
