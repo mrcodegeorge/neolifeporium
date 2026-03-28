@@ -21,7 +21,11 @@
                 <h1 class="mt-2 text-2xl font-black sm:text-3xl">Neolifeporium Enterprise Operations</h1>
                 <p class="mt-2 max-w-3xl text-sm text-white/70">Real-time intelligence across analytics, moderation, finance, advisory, content, and system health.</p>
             </div>
-            <a :href="`{{ route('admin.export.orders') }}?from=${range.from}&to=${range.to}`" class="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-white/20">Export CSV</a>
+            <div class="flex flex-wrap gap-2">
+                <a :href="`{{ route('admin.export.orders') }}?from=${range.from}&to=${range.to}`" class="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-white/20">Export Orders</a>
+                <a :href="`{{ route('admin.export.users') }}?from=${range.from}&to=${range.to}`" class="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-white/20">Export Users</a>
+                <a :href="`{{ route('admin.export.payments') }}?from=${range.from}&to=${range.to}`" class="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-white/20">Export Payments</a>
+            </div>
         </div>
         <div class="mt-5 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
             <input type="date" x-model="range.from" class="rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none">
@@ -58,6 +62,20 @@
                     <thead><tr class="border-b border-slate-100 text-xs uppercase tracking-[0.14em] text-slate-500"><th class="py-2 pr-3">Product</th><th class="py-2 pr-3">Units</th><th class="py-2">Revenue</th></tr></thead>
                     <tbody><template x-for="product in data.analytics.top_selling_products" :key="product.id"><tr class="border-b border-slate-50"><td class="py-2 pr-3 font-semibold text-slate-900" x-text="product.name"></td><td class="py-2 pr-3 text-slate-600" x-text="number(product.units_sold)"></td><td class="py-2 text-slate-900" x-text="currency(product.revenue)"></td></tr></template></tbody>
                 </table>
+            </div>
+        </article>
+        <article class="rounded-3xl bg-white p-6 shadow-lg shadow-black/5">
+            <h2 class="text-lg font-black text-slate-900">System Insights</h2>
+            <div class="mt-4 space-y-3">
+                <template x-for="(insight, idx) in data.insights" :key="`insight-${idx}`">
+                    <div class="rounded-2xl border p-4" :class="insight.severity === 'high' ? 'border-red-200 bg-red-50' : (insight.severity === 'positive' ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')">
+                        <p class="text-sm font-bold text-slate-900" x-text="insight.title"></p>
+                        <p class="mt-1 text-xs text-slate-700" x-text="insight.message"></p>
+                    </div>
+                </template>
+                <template x-if="!data.insights.length">
+                    <p class="text-sm text-slate-500">No additional insights right now.</p>
+                </template>
             </div>
         </article>
     </section>
@@ -138,6 +156,39 @@
                 <div><label class="text-xs uppercase tracking-[0.14em] text-slate-500">Unusual Order Multiplier</label><input type="number" step="0.1" name="unusual_order_multiplier" min="1.2" max="10" value="{{ $dashboard['automation']['unusual_order_multiplier'] }}" class="mt-1 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm"></div>
                 <button class="md:col-span-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Save Automation Rules</button>
             </form>
+        </article>
+        <article class="rounded-3xl bg-white p-6 shadow-lg shadow-black/5">
+            <h2 class="text-lg font-black text-slate-900">Scheduled Report Delivery</h2>
+            <p class="mt-1 text-sm text-slate-600">Configure recurring admin reports for operations visibility.</p>
+            <form method="POST" action="{{ route('admin.reporting.schedule') }}" class="mt-4 grid gap-4 md:grid-cols-2">
+                @csrf
+                <div>
+                    <label class="text-xs uppercase tracking-[0.14em] text-slate-500">Frequency</label>
+                    <select name="frequency" class="mt-1 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm">
+                        <option value="weekly" @selected(($dashboard['reporting']['schedule']['frequency'] ?? 'weekly') === 'weekly')>Weekly</option>
+                        <option value="monthly" @selected(($dashboard['reporting']['schedule']['frequency'] ?? 'weekly') === 'monthly')>Monthly</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="text-xs uppercase tracking-[0.14em] text-slate-500">Delivery Channel</label>
+                    <select name="delivery_channel" class="mt-1 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm">
+                        <option value="email" @selected(($dashboard['reporting']['schedule']['delivery_channel'] ?? 'email') === 'email')>Email</option>
+                        <option value="in_app" @selected(($dashboard['reporting']['schedule']['delivery_channel'] ?? 'email') === 'in_app')>In-app</option>
+                    </select>
+                </div>
+                <div class="md:col-span-2">
+                    <label class="text-xs uppercase tracking-[0.14em] text-slate-500">Recipient Email (optional)</label>
+                    <input type="email" name="recipient_email" value="{{ $dashboard['reporting']['schedule']['recipient_email'] ?? '' }}" class="mt-1 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm" placeholder="ops@neolifeporium.com">
+                </div>
+                <label class="md:col-span-2 rounded-xl border border-slate-200 p-4">
+                    <input type="checkbox" name="enabled" value="1" class="mr-2" @checked(($dashboard['reporting']['schedule']['enabled'] ?? false) === true)>
+                    <span class="text-sm font-semibold text-slate-800">Enable scheduled delivery</span>
+                </label>
+                <button class="md:col-span-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Save Report Schedule</button>
+            </form>
+            @if(!empty($dashboard['reporting']['schedule']['updated_at']))
+                <p class="mt-3 text-xs text-slate-500">Last updated: {{ $dashboard['reporting']['schedule']['updated_at'] }}</p>
+            @endif
         </article>
     </section>
 

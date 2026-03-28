@@ -1,0 +1,15 @@
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # If request is already for /public, do nothing.
+    RewriteRule ^public/ - [L]
+
+    # Serve existing files from root as-is (e.g. validation files).
+    RewriteCond %{REQUEST_FILENAME} -f
+    RewriteRule ^ - [L]
+
+    # Route everything else to /public.
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>

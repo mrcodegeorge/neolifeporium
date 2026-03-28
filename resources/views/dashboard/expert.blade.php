@@ -11,6 +11,27 @@
 
 @section('dashboard_content')
 <div class="space-y-6" x-data="expertDashboard(@js($dashboard), @js(route('expert.data')))">
+    <div class="rounded-3xl bg-white p-5 shadow-lg shadow-black/5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Service Command Layer</p>
+                <p class="text-sm text-slate-600">Track workload quality and revenue momentum in your chosen period.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <input type="date" x-model="range.from" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <input type="date" x-model="range.to" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <button @click="refreshWithRange" class="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">Apply</button>
+            </div>
+        </div>
+        <div class="mt-4 grid gap-3 md:grid-cols-3">
+            <template x-for="(insight, idx) in insights" :key="`expert-insight-${idx}`">
+                <div class="rounded-2xl border p-4" :class="insight.severity === 'high' ? 'border-red-200 bg-red-50' : (insight.severity === 'positive' ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')">
+                    <p class="text-sm font-bold text-slate-900" x-text="insight.title"></p>
+                    <p class="mt-1 text-xs text-slate-700" x-text="insight.message"></p>
+                </div>
+            </template>
+        </div>
+    </div>
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div class="rounded-2xl bg-white p-5 shadow-lg shadow-black/5"><p class="text-xs uppercase tracking-[0.14em] text-slate-500">Total Sessions</p><p class="mt-2 text-2xl font-black" x-text="data.kpis.total_sessions"></p></div>
         <div class="rounded-2xl bg-white p-5 shadow-lg shadow-black/5"><p class="text-xs uppercase tracking-[0.14em] text-slate-500">Earnings</p><p class="mt-2 text-2xl font-black" x-text="currency(data.kpis.earnings)"></p></div>
@@ -77,11 +98,50 @@ function expertDashboard(initial, endpoint) {
         data: initial,
         statusChart: null,
         earningsChart: null,
+        range: { from: initial.range.from, to: initial.range.to },
+        insights: [],
         init() {
+            this.syncInsights();
             this.renderCharts();
             setInterval(() => this.refresh(), 60000);
         },
         currency(v){ return `GHS ${Number(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`; },
+        syncInsights() {
+            const insights = [];
+            const sessions = Number(this.data.kpis.total_sessions ?? 0);
+            const score = Number(this.data.kpis.service_score ?? 0);
+            const availability = Boolean(this.data.kpis.availability);
+
+            if (!availability) {
+                insights.push({
+                    severity: 'medium',
+                    title: 'You are currently offline',
+                    message: 'Go available to capture new advisory bookings.',
+                });
+            }
+            if (sessions >= 10) {
+                insights.push({
+                    severity: 'positive',
+                    title: 'Strong session volume',
+                    message: `${sessions} sessions in selected period. Keep response times fast.`,
+                });
+            }
+            if (score > 0 && score < 3.5) {
+                insights.push({
+                    severity: 'high',
+                    title: 'Service quality needs attention',
+                    message: `Service score is ${score}. Review session outcomes and follow-up notes.`,
+                });
+            }
+            if (!insights.length) {
+                insights.push({
+                    severity: 'positive',
+                    title: 'Advisory pipeline stable',
+                    message: 'No urgent service alerts right now.',
+                });
+            }
+            this.insights = insights;
+        },
         renderCharts() {
             const statusLabels = this.data.charts.sessions_by_status.map(i => i.label);
             const statusValues = this.data.charts.sessions_by_status.map(i => i.value);
@@ -101,12 +161,14 @@ function expertDashboard(initial, endpoint) {
             });
         },
         async refresh() {
-            const res = await fetch(endpoint);
+            const res = await fetch(`${endpoint}?from=${encodeURIComponent(this.range.from)}&to=${encodeURIComponent(this.range.to)}`);
             if (!res.ok) return;
             const payload = await res.json();
             this.data = payload.data;
+            this.syncInsights();
             this.renderCharts();
         },
+        async refreshWithRange() { await this.refresh(); },
         async updateBooking(id, status) {
             await fetch(`/expert-panel/bookings/${id}/status`, {
                 method: 'PATCH',

@@ -58,6 +58,11 @@ class DashboardAnalyticsService
             ->where('group', 'automation_rules')
             ->pluck('value', 'key')
             ->toArray();
+        $reportScheduleRaw = Setting::query()
+            ->where('group', 'reporting')
+            ->where('key', 'schedule')
+            ->value('value');
+        $reportSchedule = $reportScheduleRaw ? (json_decode((string) $reportScheduleRaw, true) ?: []) : [];
 
         $stuckOrderHours = (int) ($automationRules['stuck_order_hours'] ?? 48);
         $unusualOrderMultiplier = (float) ($automationRules['unusual_order_multiplier'] ?? 2.5);
@@ -285,6 +290,27 @@ class DashboardAnalyticsService
                 'stuck_order_hours' => $stuckOrderHours,
                 'unusual_order_multiplier' => $unusualOrderMultiplier,
             ],
+            'reporting' => [
+                'schedule' => [
+                    'frequency' => $reportSchedule['frequency'] ?? 'weekly',
+                    'delivery_channel' => $reportSchedule['delivery_channel'] ?? 'email',
+                    'recipient_email' => $reportSchedule['recipient_email'] ?? null,
+                    'enabled' => (bool) ($reportSchedule['enabled'] ?? false),
+                    'updated_at' => $reportSchedule['updated_at'] ?? null,
+                ],
+            ],
+            'insights' => $this->buildAdminInsights(
+                revenueDelta: $this->delta($revenueCurrent, $revenuePrevious),
+                ordersDelta: $this->delta($ordersCurrent, $ordersPrevious),
+                conversionRate: $conversionRate,
+                pendingVendorApprovals: User::query()
+                    ->whereHas('vendorProfile', fn (Builder $q) => $q->where('verification_status', 'pending'))
+                    ->count(),
+                failedPayments24h: Payment::query()
+                    ->where('created_at', '>=', now()->subDay())
+                    ->whereIn('status', ['failed', 'error'])
+                    ->count()
+            ),
         ];
     }
 
@@ -650,6 +676,64 @@ class DashboardAnalyticsService
             ->all();
 
         return $lines;
+    }
+
+    private function buildAdminInsights(
+        float $revenueDelta,
+        float $ordersDelta,
+        float $conversionRate,
+        int $pendingVendorApprovals,
+        int $failedPayments24h
+    ): array {
+        $insights = [];
+
+        if ($revenueDelta < 0) {
+            $insights[] = [
+                'severity' => 'high',
+                'title' => 'Revenue trend is down',
+                'message' => "Revenue is {$revenueDelta}% vs previous period. Prioritize category-level drill-down and vendor outreach.",
+            ];
+        } else {
+            $insights[] = [
+                'severity' => 'positive',
+                'title' => 'Revenue trend is healthy',
+                'message' => "Revenue is up {$revenueDelta}% vs previous period.",
+            ];
+        }
+
+        if ($conversionRate < 35) {
+            $insights[] = [
+                'severity' => 'medium',
+                'title' => 'Checkout conversion opportunity',
+                'message' => "Conversion is {$conversionRate}%. Review failed payments and stuck orders to recover drop-offs.",
+            ];
+        }
+
+        if ($pendingVendorApprovals > 0) {
+            $insights[] = [
+                'severity' => 'medium',
+                'title' => 'Vendor approvals pending',
+                'message' => "{$pendingVendorApprovals} vendor applications are waiting; clearing backlog can increase catalog depth.",
+            ];
+        }
+
+        if ($failedPayments24h > 0) {
+            $insights[] = [
+                'severity' => 'high',
+                'title' => 'Payment failures detected',
+                'message' => "{$failedPayments24h} failed payments in the last 24 hours need provider-level review.",
+            ];
+        }
+
+        if ($ordersDelta > 0 && $revenueDelta <= 0) {
+            $insights[] = [
+                'severity' => 'medium',
+                'title' => 'Order count up but revenue flat/down',
+                'message' => 'Average order value may be under pressure. Consider bundle promotions and cross-sell blocks.',
+            ];
+        }
+
+        return $insights;
     }
 
     private function resolveRange(?string $from = null, ?string $to = null): array

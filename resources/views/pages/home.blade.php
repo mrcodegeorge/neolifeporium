@@ -19,4 +19,5 @@
     @include('pages.home._marketplace-preview')
     @include('pages.home._advisory-cta')
     @include('pages.home._final-cta')
+    @include('pages.home._live-chat')
 @endsection

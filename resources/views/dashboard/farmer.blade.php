@@ -12,6 +12,27 @@
 
 @section('dashboard_content')
 <div class="space-y-6" x-data="farmerDashboard(@js($dashboard), @js(route('dashboard.data')))">
+    <div class="rounded-3xl bg-white p-5 shadow-lg shadow-black/5">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Decision Workspace</p>
+                <p class="text-sm text-slate-600">Tune your intelligence window for planning and buying.</p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+                <input type="date" x-model="range.from" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <input type="date" x-model="range.to" class="rounded-lg border border-slate-200 px-2 py-1.5 text-xs">
+                <button @click="refreshWithRange" class="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">Apply</button>
+            </div>
+        </div>
+        <div class="mt-4 grid gap-3 md:grid-cols-3">
+            <template x-for="(insight, idx) in insights" :key="`farmer-insight-${idx}`">
+                <div class="rounded-2xl border p-4" :class="insight.severity === 'high' ? 'border-red-200 bg-red-50' : (insight.severity === 'positive' ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')">
+                    <p class="text-sm font-bold text-slate-900" x-text="insight.title"></p>
+                    <p class="mt-1 text-xs text-slate-700" x-text="insight.message"></p>
+                </div>
+            </template>
+        </div>
+    </div>
     <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div class="rounded-2xl bg-white p-5 shadow-lg shadow-black/5"><p class="text-xs uppercase tracking-[0.14em] text-slate-500">Orders</p><p class="mt-2 text-2xl font-black" x-text="data.kpis.orders_count"></p></div>
         <div class="rounded-2xl bg-white p-5 shadow-lg shadow-black/5"><p class="text-xs uppercase tracking-[0.14em] text-slate-500">In Progress</p><p class="mt-2 text-2xl font-black" x-text="data.kpis.orders_in_progress"></p></div>
@@ -105,11 +126,52 @@ function farmerDashboard(initial, endpoint) {
     return {
         data: initial,
         chart: null,
+        range: { from: initial.range.from, to: initial.range.to },
+        insights: [],
         init() {
+            this.syncInsights();
             this.renderChart();
             setInterval(() => this.refresh(), 60000);
         },
         currency(v){ return `GHS ${Number(v).toLocaleString(undefined, {minimumFractionDigits:2, maximumFractionDigits:2})}`; },
+        syncInsights() {
+            const insights = [];
+            const inProgress = Number(this.data.kpis.orders_in_progress ?? 0);
+            const weather = this.data.tables.weather_updates ?? [];
+            const highAlerts = weather.filter((item) => item.alert_level === 'high').length;
+            const recommendations = this.data.tables.recommended_products?.length ?? 0;
+
+            if (highAlerts > 0) {
+                insights.push({
+                    severity: 'high',
+                    title: 'Weather risk detected',
+                    message: `${highAlerts} high-alert forecast(s). Review weather-safe inputs before checkout.`,
+                });
+            }
+            if (inProgress > 0) {
+                insights.push({
+                    severity: 'medium',
+                    title: 'Orders still in motion',
+                    message: `${inProgress} order(s) are in progress. Track fulfillment before planting windows close.`,
+                });
+            }
+            if (recommendations > 0) {
+                insights.push({
+                    severity: 'positive',
+                    title: 'Actionable recommendations ready',
+                    message: `${recommendations} product recommendation(s) matched to your farm profile.`,
+                });
+            }
+            if (!insights.length) {
+                insights.push({
+                    severity: 'positive',
+                    title: 'Dashboard is stable',
+                    message: 'No urgent flags right now. Continue with this week’s plan.',
+                });
+            }
+
+            this.insights = insights;
+        },
         renderChart() {
             const labels = this.data.charts.orders_timeline.map(i => i.label);
             const values = this.data.charts.orders_timeline.map(i => i.value);
@@ -121,12 +183,14 @@ function farmerDashboard(initial, endpoint) {
             });
         },
         async refresh() {
-            const res = await fetch(endpoint);
+            const res = await fetch(`${endpoint}?from=${encodeURIComponent(this.range.from)}&to=${encodeURIComponent(this.range.to)}`);
             if (!res.ok) return;
             const payload = await res.json();
             this.data = payload.data;
+            this.syncInsights();
             this.renderChart();
-        }
+        },
+        async refreshWithRange() { await this.refresh(); }
     }
 }
 </script>
