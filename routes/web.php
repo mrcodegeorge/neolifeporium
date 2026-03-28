@@ -40,6 +40,7 @@ Route::middleware('guest')->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
+    Route::post('/impersonation/leave', [AdminManagementController::class, 'leaveImpersonation'])->name('impersonation.leave');
     Route::get('/my-dashboard', [RoleController::class, 'redirectDashboard'])->name('dashboard.redirect');
     Route::get('/roles/choose', [RoleController::class, 'choose'])->name('roles.choose');
     Route::post('/roles/switch', [RoleController::class, 'switch'])->name('roles.switch');
@@ -108,6 +109,9 @@ Route::middleware(['auth', 'role:vendor,admin,super_admin'])->prefix('/vendor-pa
 
 Route::middleware(['auth', 'role:admin,super_admin'])->prefix('/admin-panel')->name('admin.')->group(function () {
     Route::get('/export/orders', [AdminManagementController::class, 'exportOrdersCsv'])->name('export.orders');
+    Route::post('/broadcast', [AdminManagementController::class, 'broadcastNotification'])->name('broadcast');
+    Route::post('/automation-rules', [AdminManagementController::class, 'updateAutomationRules'])->name('automation.rules');
+    Route::post('/users/{user}/impersonate', [AdminManagementController::class, 'impersonate'])->name('users.impersonate');
     Route::get('/settings', [AdminSettingsController::class, 'index'])->name('settings');
     Route::patch('/settings', [AdminSettingsController::class, 'updatePlatformSettings'])->name('settings.update');
     Route::post('/staff', [AdminSettingsController::class, 'storeStaff'])->name('staff.store');

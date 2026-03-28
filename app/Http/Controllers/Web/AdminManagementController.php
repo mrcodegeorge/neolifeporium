@@ -6,9 +6,11 @@ use App\Enums\RoleType;
 use App\Http\Controllers\Controller;
 use App\Models\AgronomistProfile;
 use App\Models\Booking;
+use App\Models\Notification;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Product;
+use App\Models\Setting;
 use App\Models\User;
 use App\Models\VendorProfile;
 use App\Services\Auth\RoleOnboardingService;
@@ -16,6 +18,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\View\View;
 
@@ -290,5 +293,113 @@ class AdminManagementController extends Controller
         }, $filename, [
             'Content-Type' => 'text/csv',
         ]);
+    }
+
+    public function impersonate(User $user): RedirectResponse
+    {
+        abort_if((int) auth()->id() === (int) $user->id, 422, 'You are already this user.');
+
+        session([
+            'impersonator_id' => auth()->id(),
+            'impersonator_guard' => 'web',
+        ]);
+
+        Auth::login($user);
+        session(['active_role' => $user->roles()->value('slug')]);
+
+        return redirect()->route('dashboard.redirect')->with('status', "Impersonating {$user->name}.");
+    }
+
+    public function leaveImpersonation(): RedirectResponse
+    {
+        $adminId = (int) session('impersonator_id');
+        abort_if($adminId <= 0, 403, 'No impersonation session found.');
+
+        $admin = User::query()->findOrFail($adminId);
+        Auth::login($admin);
+        session()->forget(['impersonator_id', 'impersonator_guard']);
+        session(['active_role' => $admin->roles()->value('slug')]);
+
+        return redirect()->route('admin.panel')->with('status', 'Returned to admin session.');
+    }
+
+    public function broadcastNotification(Request $request): RedirectResponse
+    {
+        $payload = $request->validate([
+            'title' => ['required', 'string', 'max:120'],
+            'message' => ['required', 'string', 'max:1000'],
+            'role' => ['nullable', 'string', 'in:farmer,vendor,agronomist,admin,super_admin'],
+            'region' => ['nullable', 'string', 'max:120'],
+            'channel' => ['nullable', 'string', 'in:in_app,email,sms'],
+        ]);
+
+        $channel = $payload['channel'] ?? 'in_app';
+
+        User::query()
+            ->when(! empty($payload['role']), function (Builder $query) use ($payload): void {
+                $query->whereHas('roles', fn (Builder $roleQuery) => $roleQuery->where('slug', $payload['role']));
+            })
+            ->when(! empty($payload['region']), function (Builder $query) use ($payload): void {
+                $region = $payload['region'];
+                $query->where(function (Builder $inner) use ($region): void {
+                    $inner->whereHas('farmerProfile', fn (Builder $farmerQuery) => $farmerQuery->where('region', $region))
+                        ->orWhereHas('vendorProfile', fn (Builder $vendorQuery) => $vendorQuery->where('region', $region))
+                        ->orWhereHas('agronomistProfile', fn (Builder $expertQuery) => $expertQuery->whereJsonContains('regions_served', $region));
+                });
+            })
+            ->select('id')
+            ->chunkById(500, function ($users) use ($payload, $channel): void {
+                $rows = $users->map(fn (User $user) => [
+                    'user_id' => $user->id,
+                    'type' => 'admin_broadcast',
+                    'channel' => $channel,
+                    'title' => $payload['title'],
+                    'message' => $payload['message'],
+                    'payload' => json_encode([
+                        'role_filter' => $payload['role'] ?? null,
+                        'region_filter' => $payload['region'] ?? null,
+                    ]),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ])->all();
+
+                if ($rows !== []) {
+                    Notification::query()->insert($rows);
+                }
+            });
+
+        return back()->with('status', 'Broadcast notification queued to target audience.');
+    }
+
+    public function updateAutomationRules(Request $request): RedirectResponse
+    {
+        $payload = $request->validate([
+            'stuck_order_alert' => ['nullable', 'boolean'],
+            'fraud_guard_enabled' => ['nullable', 'boolean'],
+            'weekly_report_enabled' => ['nullable', 'boolean'],
+            'auto_suspend_vendor_enabled' => ['nullable', 'boolean'],
+            'stuck_order_hours' => ['nullable', 'integer', 'min:1', 'max:240'],
+            'unusual_order_multiplier' => ['nullable', 'numeric', 'min:1.2', 'max:10'],
+        ]);
+
+        $defaults = [
+            'stuck_order_alert' => false,
+            'fraud_guard_enabled' => false,
+            'weekly_report_enabled' => false,
+            'auto_suspend_vendor_enabled' => false,
+            'stuck_order_hours' => 48,
+            'unusual_order_multiplier' => 2.5,
+        ];
+
+        $rules = array_merge($defaults, $payload);
+
+        foreach ($rules as $key => $value) {
+            Setting::query()->updateOrCreate(
+                ['group' => 'automation_rules', 'key' => $key],
+                ['value' => is_bool($value) ? ($value ? '1' : '0') : (string) $value]
+            );
+        }
+
+        return back()->with('status', 'Automation rules updated.');
     }
 }

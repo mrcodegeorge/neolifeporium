@@ -59,16 +59,24 @@
                             </span>
                         </td>
                         <td class="px-4 py-3 text-right">
-                            <form action="{{ route('admin.users.status', $user) }}" method="POST" class="inline-flex items-center gap-2">
-                                @csrf
-                                @method('PATCH')
-                                <select name="status" class="rounded-xl border-slate-200 text-xs">
-                                    @foreach(['active','inactive','suspended'] as $status)
-                                        <option value="{{ $status }}" @selected($user->status === $status)>{{ ucfirst($status) }}</option>
-                                    @endforeach
-                                </select>
-                                <button class="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white">Update</button>
-                            </form>
+                            <div class="inline-flex flex-wrap items-center justify-end gap-2">
+                                <form action="{{ route('admin.users.status', $user) }}" method="POST" class="inline-flex items-center gap-2">
+                                    @csrf
+                                    @method('PATCH')
+                                    <select name="status" class="rounded-xl border-slate-200 text-xs">
+                                        @foreach(['active','inactive','suspended'] as $status)
+                                            <option value="{{ $status }}" @selected($user->status === $status)>{{ ucfirst($status) }}</option>
+                                        @endforeach
+                                    </select>
+                                    <button class="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white">Update</button>
+                                </form>
+                                @if((int) auth()->id() !== (int) $user->id)
+                                    <form action="{{ route('admin.users.impersonate', $user) }}" method="POST">
+                                        @csrf
+                                        <button class="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">Impersonate</button>
+                                    </form>
+                                @endif
+                            </div>
                         </td>
                     </tr>
                 @empty

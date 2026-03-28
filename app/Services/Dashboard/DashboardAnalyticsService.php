@@ -3,20 +3,24 @@
 namespace App\Services\Dashboard;
 
 use App\Models\Article;
+use App\Models\ArticleView;
 use App\Models\Booking;
+use App\Models\ExpertReview;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Payment;
 use App\Models\Product;
 use App\Models\Review;
+use App\Models\Setting;
 use App\Models\User;
+use App\Models\VendorProfile;
 use App\Models\WeatherInsight;
 use App\Models\Wishlist;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
 
 class DashboardAnalyticsService
 {
@@ -24,10 +28,41 @@ class DashboardAnalyticsService
     {
         [$fromDate, $toDate, $previousFrom, $previousTo] = $this->resolveRange($from, $to);
 
-        $revenueCurrent = (float) Order::query()->whereBetween('created_at', [$fromDate, $toDate])->sum('total_amount');
-        $revenuePrevious = (float) Order::query()->whereBetween('created_at', [$previousFrom, $previousTo])->sum('total_amount');
+        $revenueCurrent = (float) Order::query()
+            ->whereIn('status', ['paid', 'processing', 'shipped', 'delivered', 'completed'])
+            ->whereBetween('created_at', [$fromDate, $toDate])
+            ->sum('total_amount');
+        $revenuePrevious = (float) Order::query()
+            ->whereIn('status', ['paid', 'processing', 'shipped', 'delivered', 'completed'])
+            ->whereBetween('created_at', [$previousFrom, $previousTo])
+            ->sum('total_amount');
         $ordersCurrent = Order::query()->whereBetween('created_at', [$fromDate, $toDate])->count();
         $ordersPrevious = Order::query()->whereBetween('created_at', [$previousFrom, $previousTo])->count();
+        $platformEarnings = (float) Order::query()->whereBetween('created_at', [$fromDate, $toDate])->sum('commission_amount');
+        $vendorEarnings = max(0.0, $revenueCurrent - $platformEarnings);
+        $paidOrdersInRange = Order::query()
+            ->whereBetween('created_at', [$fromDate, $toDate])
+            ->whereIn('status', ['paid', 'processing', 'shipped', 'delivered', 'completed'])
+            ->count();
+        $conversionRate = $ordersCurrent > 0 ? round(($paidOrdersInRange / $ordersCurrent) * 100, 1) : 0.0;
+        $aov = $paidOrdersInRange > 0 ? round($revenueCurrent / $paidOrdersInRange, 2) : 0.0;
+        $monthlyRecurringRevenue = (float) Order::query()
+            ->whereIn('status', ['paid', 'processing', 'shipped', 'delivered', 'completed'])
+            ->where('created_at', '>=', now()->copy()->subDays(30))
+            ->sum('total_amount');
+
+        $dau = $this->dailyActiveUsers();
+        $retentionRate = $this->customerRetentionRate();
+
+        $automationRules = Setting::query()
+            ->where('group', 'automation_rules')
+            ->pluck('value', 'key')
+            ->toArray();
+
+        $stuckOrderHours = (int) ($automationRules['stuck_order_hours'] ?? 48);
+        $unusualOrderMultiplier = (float) ($automationRules['unusual_order_multiplier'] ?? 2.5);
+        $fraudGuardEnabled = ($automationRules['fraud_guard_enabled'] ?? '0') === '1';
+        $stuckOrderAlertEnabled = ($automationRules['stuck_order_alert'] ?? '0') === '1';
 
         return [
             'range' => [
@@ -39,17 +74,172 @@ class DashboardAnalyticsService
                 'total_vendors' => User::query()->whereHas('roles', fn (Builder $q) => $q->where('slug', 'vendor'))->count(),
                 'total_orders' => Order::count(),
                 'active_farmers' => User::query()->whereHas('roles', fn (Builder $q) => $q->where('slug', 'farmer'))->count(),
-                'revenue_current' => $revenueCurrent,
+                'total_revenue' => $revenueCurrent,
                 'revenue_previous' => $revenuePrevious,
+                'mrr' => $monthlyRecurringRevenue,
+                'dau' => $dau,
+                'conversion_rate' => $conversionRate,
+                'aov' => $aov,
                 'orders_current' => $ordersCurrent,
                 'orders_previous' => $ordersPrevious,
                 'revenue_delta' => $this->delta($revenueCurrent, $revenuePrevious),
                 'orders_delta' => $this->delta($ordersCurrent, $ordersPrevious),
+                'platform_earnings' => $platformEarnings,
+                'vendor_earnings' => $vendorEarnings,
+                'retention_rate' => $retentionRate,
             ],
             'charts' => [
                 'revenue_over_time' => $this->seriesRevenueByDay($fromDate, $toDate),
                 'orders_by_category' => $this->seriesOrdersByCategory($fromDate, $toDate),
                 'user_growth' => $this->seriesUserGrowthMonthly(6),
+                'users_active_vs_inactive' => [
+                    ['label' => 'Active', 'value' => User::query()->where('status', 'active')->count()],
+                    ['label' => 'Inactive', 'value' => User::query()->whereIn('status', ['inactive', 'suspended'])->count()],
+                ],
+            ],
+            'analytics' => [
+                'top_selling_products' => OrderItem::query()
+                    ->join('orders', 'orders.id', '=', 'order_items.order_id')
+                    ->join('products', 'products.id', '=', 'order_items.product_id')
+                    ->whereBetween('orders.created_at', [$fromDate, $toDate])
+                    ->select('products.id', 'products.name')
+                    ->selectRaw('SUM(order_items.quantity) as units_sold')
+                    ->selectRaw('SUM(order_items.line_total) as revenue')
+                    ->groupBy('products.id', 'products.name')
+                    ->orderByDesc('units_sold')
+                    ->limit(8)
+                    ->get(),
+                'vendor_performance' => Order::query()
+                    ->join('users as vendors', 'vendors.id', '=', 'orders.vendor_id')
+                    ->leftJoin('vendor_profiles', 'vendor_profiles.user_id', '=', 'vendors.id')
+                    ->whereBetween('orders.created_at', [$fromDate, $toDate])
+                    ->selectRaw('orders.vendor_id')
+                    ->selectRaw("COALESCE(vendor_profiles.business_name, vendors.name) as vendor_name")
+                    ->selectRaw('COUNT(orders.id) as total_orders')
+                    ->selectRaw('SUM(orders.total_amount) as gross_revenue')
+                    ->selectRaw('SUM(orders.commission_amount) as commission')
+                    ->groupBy('orders.vendor_id', 'vendor_profiles.business_name', 'vendors.name')
+                    ->orderByDesc('gross_revenue')
+                    ->limit(10)
+                    ->get(),
+                'category_performance' => $this->seriesOrdersByCategory($fromDate, $toDate),
+            ],
+            'operations' => [
+                'order_stream' => Order::query()
+                    ->with('farmer:id,name', 'vendor:id,name', 'vendor.vendorProfile:id,user_id,business_name')
+                    ->latest()
+                    ->limit(12)
+                    ->get(),
+                'stuck_orders' => Order::query()
+                    ->with('vendor.vendorProfile')
+                    ->whereIn('status', ['pending', 'paid', 'processing'])
+                    ->where('updated_at', '<=', now()->subHours($stuckOrderHours))
+                    ->latest('updated_at')
+                    ->limit(10)
+                    ->get(),
+                'pending_vendor_applications' => VendorProfile::query()
+                    ->with('user')
+                    ->where('verification_status', 'pending')
+                    ->latest()
+                    ->limit(10)
+                    ->get(),
+            ],
+            'finance' => [
+                'ledger' => Payment::query()
+                    ->with('user:id,name,email')
+                    ->latest()
+                    ->limit(15)
+                    ->get(),
+                'vendor_payout_candidates' => Order::query()
+                    ->join('users as vendors', 'vendors.id', '=', 'orders.vendor_id')
+                    ->leftJoin('vendor_profiles', 'vendor_profiles.user_id', '=', 'vendors.id')
+                    ->whereBetween('orders.created_at', [$fromDate, $toDate])
+                    ->whereIn('orders.status', ['delivered', 'completed'])
+                    ->selectRaw('orders.vendor_id')
+                    ->selectRaw("COALESCE(vendor_profiles.business_name, vendors.name) as vendor_name")
+                    ->selectRaw('SUM(orders.total_amount - orders.commission_amount) as payout_amount')
+                    ->groupBy('orders.vendor_id', 'vendor_profiles.business_name', 'vendors.name')
+                    ->orderByDesc('payout_amount')
+                    ->limit(10)
+                    ->get(),
+            ],
+            'advisory' => [
+                'sessions_completed' => Booking::query()->where('status', 'completed')->count(),
+                'sessions_pending' => Booking::query()->where('status', 'pending')->count(),
+                'average_rating' => round((float) ExpertReview::query()->avg('rating'), 2),
+                'revenue_per_expert' => Booking::query()
+                    ->join('users as experts', 'experts.id', '=', 'bookings.agronomist_id')
+                    ->leftJoin('agronomist_profiles', 'agronomist_profiles.user_id', '=', 'experts.id')
+                    ->whereBetween('bookings.created_at', [$fromDate, $toDate])
+                    ->selectRaw('bookings.agronomist_id as expert_id')
+                    ->selectRaw("COALESCE(agronomist_profiles.specialty, experts.name) as expert_name")
+                    ->selectRaw('COUNT(bookings.id) as sessions')
+                    ->selectRaw('SUM(bookings.amount) as revenue')
+                    ->groupBy('bookings.agronomist_id', 'agronomist_profiles.specialty', 'experts.name')
+                    ->orderByDesc('revenue')
+                    ->limit(8)
+                    ->get(),
+            ],
+            'content' => [
+                'most_viewed_articles' => ArticleView::query()
+                    ->join('articles', 'articles.id', '=', 'article_views.article_id')
+                    ->select('articles.id', 'articles.title', 'articles.slug')
+                    ->selectRaw('COUNT(article_views.id) as views')
+                    ->groupBy('articles.id', 'articles.title', 'articles.slug')
+                    ->orderByDesc('views')
+                    ->limit(8)
+                    ->get(),
+                'recent_articles' => Article::query()
+                    ->with('author:id,name')
+                    ->latest()
+                    ->limit(8)
+                    ->get(),
+            ],
+            'notifications' => [
+                'recent' => Notification::query()
+                    ->with('user:id,name')
+                    ->latest()
+                    ->limit(12)
+                    ->get(),
+                'unread_count' => Notification::query()->whereNull('read_at')->count(),
+            ],
+            'monitoring' => [
+                'log_tail' => $this->tailLaravelErrors(25),
+                'system_health' => [
+                    'failed_payments_24h' => Payment::query()
+                        ->where('created_at', '>=', now()->subDay())
+                        ->whereIn('status', ['failed', 'error'])
+                        ->count(),
+                    'stuck_orders' => Order::query()
+                        ->whereIn('status', ['pending', 'paid', 'processing'])
+                        ->where('updated_at', '<=', now()->subHours($stuckOrderHours))
+                        ->count(),
+                    'pending_vendor_kyc' => VendorProfile::query()->where('verification_status', 'pending')->count(),
+                ],
+            ],
+            'risk_flags' => [
+                'enabled' => [
+                    'fraud_guard' => $fraudGuardEnabled,
+                    'stuck_order_alert' => $stuckOrderAlertEnabled,
+                ],
+                'unusual_vendor_volume' => $this->unusualVendorOrderVolume($fromDate, $toDate, $unusualOrderMultiplier),
+                'suspicious_payments' => Payment::query()
+                    ->with('user:id,name,email')
+                    ->whereIn('status', ['pending', 'failed'])
+                    ->latest()
+                    ->limit(10)
+                    ->get(),
+                'fake_vendor_signals' => VendorProfile::query()
+                    ->with('user:id,name,email,created_at')
+                    ->where('verification_status', 'pending')
+                    ->where(function (Builder $query): void {
+                        $query->whereNull('business_type')
+                            ->orWhereNull('description')
+                            ->orWhere('created_at', '<=', now()->subDays(14));
+                    })
+                    ->latest()
+                    ->limit(10)
+                    ->get(),
             ],
             'tables' => [
                 'recent_orders' => Order::query()
@@ -86,6 +276,14 @@ class DashboardAnalyticsService
                     ->whereHas('vendorProfile', fn (Builder $q) => $q->where('verification_status', 'pending'))
                     ->count(),
                 'products_pending_moderation' => Product::query()->where('is_active', false)->count(),
+            ],
+            'automation' => [
+                'stuck_order_alert' => $stuckOrderAlertEnabled,
+                'fraud_guard_enabled' => $fraudGuardEnabled,
+                'weekly_report_enabled' => ($automationRules['weekly_report_enabled'] ?? '0') === '1',
+                'auto_suspend_vendor_enabled' => ($automationRules['auto_suspend_vendor_enabled'] ?? '0') === '1',
+                'stuck_order_hours' => $stuckOrderHours,
+                'unusual_order_multiplier' => $unusualOrderMultiplier,
             ],
         ];
     }
@@ -374,6 +572,84 @@ class DashboardAnalyticsService
             'users' => $users,
             'orders' => $orders,
         ];
+    }
+
+    private function dailyActiveUsers(): int
+    {
+        $start = now()->startOfDay();
+        $end = now()->endOfDay();
+
+        $orderUsers = Order::query()->whereBetween('created_at', [$start, $end])->pluck('farmer_id');
+        $bookingUsers = Booking::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->pluck('farmer_id')
+            ->merge(Booking::query()->whereBetween('created_at', [$start, $end])->pluck('agronomist_id'));
+        $contentUsers = ArticleView::query()->whereBetween('created_at', [$start, $end])->whereNotNull('user_id')->pluck('user_id');
+
+        return $orderUsers->merge($bookingUsers)->merge($contentUsers)->filter()->unique()->count();
+    }
+
+    private function customerRetentionRate(): float
+    {
+        $buyersWithAnyOrder = Order::query()
+            ->select('farmer_id')
+            ->groupBy('farmer_id')
+            ->get()
+            ->count();
+
+        if ($buyersWithAnyOrder === 0) {
+            return 0.0;
+        }
+
+        $repeatBuyers = Order::query()
+            ->select('farmer_id')
+            ->groupBy('farmer_id')
+            ->havingRaw('COUNT(*) >= 2')
+            ->get()
+            ->count();
+
+        return round(($repeatBuyers / $buyersWithAnyOrder) * 100, 1);
+    }
+
+    private function unusualVendorOrderVolume(Carbon $fromDate, Carbon $toDate, float $multiplier): Collection
+    {
+        $baseline = Order::query()
+            ->select('vendor_id')
+            ->selectRaw('COUNT(*) as order_count')
+            ->groupBy('vendor_id')
+            ->pluck('order_count');
+
+        $average = max(1.0, (float) $baseline->avg());
+        $threshold = max(5, (int) ceil($average * $multiplier));
+
+        return Order::query()
+            ->join('users as vendors', 'vendors.id', '=', 'orders.vendor_id')
+            ->leftJoin('vendor_profiles', 'vendor_profiles.user_id', '=', 'vendors.id')
+            ->whereBetween('orders.created_at', [$fromDate, $toDate])
+            ->selectRaw('orders.vendor_id')
+            ->selectRaw("COALESCE(vendor_profiles.business_name, vendors.name) as vendor_name")
+            ->selectRaw('COUNT(orders.id) as order_count')
+            ->groupBy('orders.vendor_id', 'vendor_profiles.business_name', 'vendors.name')
+            ->havingRaw('COUNT(orders.id) >= ?', [$threshold])
+            ->orderByDesc('order_count')
+            ->limit(10)
+            ->get();
+    }
+
+    private function tailLaravelErrors(int $lineCount = 25): array
+    {
+        $path = storage_path('logs/laravel.log');
+        if (! File::exists($path)) {
+            return [];
+        }
+
+        $lines = collect(file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [])
+            ->filter(fn (string $line) => str_contains($line, 'ERROR') || str_contains($line, 'CRITICAL'))
+            ->take(-$lineCount)
+            ->values()
+            ->all();
+
+        return $lines;
     }
 
     private function resolveRange(?string $from = null, ?string $to = null): array
