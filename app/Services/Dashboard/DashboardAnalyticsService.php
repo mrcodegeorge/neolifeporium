@@ -4,8 +4,13 @@ namespace App\Services\Dashboard;
 
 use App\Models\Article;
 use App\Models\ArticleView;
+use App\Models\AdminAlert;
+use App\Models\AdminInsight;
+use App\Models\AdminAuditLog;
 use App\Models\Booking;
 use App\Models\ExpertReview;
+use App\Models\ForecastSnapshot;
+use App\Models\InventoryFlag;
 use App\Models\Notification;
 use App\Models\Order;
 use App\Models\OrderItem;
@@ -21,6 +26,7 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardAnalyticsService
 {
@@ -63,11 +69,17 @@ class DashboardAnalyticsService
             ->where('key', 'schedule')
             ->value('value');
         $reportSchedule = $reportScheduleRaw ? (json_decode((string) $reportScheduleRaw, true) ?: []) : [];
+        $hasPayments = Schema::hasTable('payments');
 
         $stuckOrderHours = (int) ($automationRules['stuck_order_hours'] ?? 48);
         $unusualOrderMultiplier = (float) ($automationRules['unusual_order_multiplier'] ?? 2.5);
         $fraudGuardEnabled = ($automationRules['fraud_guard_enabled'] ?? '0') === '1';
         $stuckOrderAlertEnabled = ($automationRules['stuck_order_alert'] ?? '0') === '1';
+
+        $failedPayments24h = $hasPayments ? Payment::query()
+            ->where('created_at', '>=', now()->subDay())
+            ->whereIn('status', ['failed', 'error'])
+            ->count() : 0;
 
         return [
             'range' => [
@@ -150,11 +162,11 @@ class DashboardAnalyticsService
                     ->get(),
             ],
             'finance' => [
-                'ledger' => Payment::query()
+                'ledger' => $hasPayments ? Payment::query()
                     ->with('user:id,name,email')
                     ->latest()
                     ->limit(15)
-                    ->get(),
+                    ->get() : collect(),
                 'vendor_payout_candidates' => Order::query()
                     ->join('users as vendors', 'vendors.id', '=', 'orders.vendor_id')
                     ->leftJoin('vendor_profiles', 'vendor_profiles.user_id', '=', 'vendors.id')
@@ -211,10 +223,10 @@ class DashboardAnalyticsService
             'monitoring' => [
                 'log_tail' => $this->tailLaravelErrors(25),
                 'system_health' => [
-                    'failed_payments_24h' => Payment::query()
+                    'failed_payments_24h' => $hasPayments ? Payment::query()
                         ->where('created_at', '>=', now()->subDay())
                         ->whereIn('status', ['failed', 'error'])
-                        ->count(),
+                        ->count() : 0,
                     'stuck_orders' => Order::query()
                         ->whereIn('status', ['pending', 'paid', 'processing'])
                         ->where('updated_at', '<=', now()->subHours($stuckOrderHours))
@@ -222,18 +234,23 @@ class DashboardAnalyticsService
                     'pending_vendor_kyc' => VendorProfile::query()->where('verification_status', 'pending')->count(),
                 ],
             ],
+            'audit_logs' => AdminAuditLog::query()
+                ->with('user:id,name,email')
+                ->latest('created_at')
+                ->limit(12)
+                ->get(),
             'risk_flags' => [
                 'enabled' => [
                     'fraud_guard' => $fraudGuardEnabled,
                     'stuck_order_alert' => $stuckOrderAlertEnabled,
                 ],
                 'unusual_vendor_volume' => $this->unusualVendorOrderVolume($fromDate, $toDate, $unusualOrderMultiplier),
-                'suspicious_payments' => Payment::query()
+                'suspicious_payments' => $hasPayments ? Payment::query()
                     ->with('user:id,name,email')
                     ->whereIn('status', ['pending', 'failed'])
                     ->latest()
                     ->limit(10)
-                    ->get(),
+                    ->get() : collect(),
                 'fake_vendor_signals' => VendorProfile::query()
                     ->with('user:id,name,email,created_at')
                     ->where('verification_status', 'pending')
@@ -261,20 +278,22 @@ class DashboardAnalyticsService
                         'total' => (float) $order->total_amount,
                         'created_at' => $order->created_at?->toDateTimeString(),
                     ]),
-                'recent_payments' => Payment::query()
-                    ->with('user')
-                    ->latest()
-                    ->limit(8)
-                    ->get()
-                    ->map(fn (Payment $payment) => [
-                        'id' => $payment->id,
-                        'reference' => $payment->provider_reference,
-                        'provider' => strtoupper($payment->provider),
-                        'user' => $payment->user?->name,
-                        'amount' => (float) $payment->amount,
-                        'status' => $payment->status,
-                        'created_at' => $payment->created_at?->toDateTimeString(),
-                    ]),
+                'recent_payments' => $hasPayments
+                    ? Payment::query()
+                        ->with('user')
+                        ->latest()
+                        ->limit(8)
+                        ->get()
+                        ->map(fn (Payment $payment) => [
+                            'id' => $payment->id,
+                            'reference' => $payment->provider_reference,
+                            'provider' => strtoupper($payment->provider),
+                            'user' => $payment->user?->name,
+                            'amount' => (float) $payment->amount,
+                            'status' => $payment->status,
+                            'created_at' => $payment->created_at?->toDateTimeString(),
+                        ])
+                    : collect(),
             ],
             'quick_actions' => [
                 'vendors_pending_approval' => User::query()
@@ -306,11 +325,33 @@ class DashboardAnalyticsService
                 pendingVendorApprovals: User::query()
                     ->whereHas('vendorProfile', fn (Builder $q) => $q->where('verification_status', 'pending'))
                     ->count(),
-                failedPayments24h: Payment::query()
-                    ->where('created_at', '>=', now()->subDay())
-                    ->whereIn('status', ['failed', 'error'])
-                    ->count()
+                failedPayments24h: $failedPayments24h
             ),
+            'ai_insights' => AdminInsight::query()
+                ->latest('generated_at')
+                ->limit(8)
+                ->get(),
+            'alerts' => AdminAlert::query()
+                ->where('status', 'open')
+                ->orderByDesc('triggered_at')
+                ->limit(10)
+                ->get(),
+            'inventory_flags' => InventoryFlag::query()
+                ->with('product:id,name', 'vendor:id,name')
+                ->whereNull('resolved_at')
+                ->orderByDesc('created_at')
+                ->limit(10)
+                ->get(),
+            'forecasts' => [
+                'revenue' => ForecastSnapshot::query()
+                    ->where('metric', 'revenue')
+                    ->latest('generated_for_date')
+                    ->first(),
+                'user_growth' => ForecastSnapshot::query()
+                    ->where('metric', 'user_growth')
+                    ->latest('generated_for_date')
+                    ->first(),
+            ],
         ];
     }
 

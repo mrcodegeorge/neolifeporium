@@ -68,6 +68,11 @@ class Product extends Model
         return $this->hasMany(Review::class);
     }
 
+    public function orderItems(): HasMany
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
     public function relatedArticles(): BelongsToMany
     {
         return $this->belongsToMany(Article::class, 'article_product')->withTimestamps();

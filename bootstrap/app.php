@@ -3,6 +3,7 @@
 use App\Http\Middleware\CheckIfInstalled;
 use App\Http\Middleware\EnsureInstalled;
 use App\Http\Middleware\EnsureUserHasRole;
+use App\Http\Middleware\AuditAdminActions;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -18,6 +19,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'not_installed' => CheckIfInstalled::class,
             'role' => EnsureUserHasRole::class,
+            'audit.admin' => AuditAdminActions::class,
         ]);
 
         $middleware->web(prepend: [

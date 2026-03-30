@@ -14,6 +14,10 @@ use App\Models\Setting;
 use App\Models\User;
 use App\Models\VendorProfile;
 use App\Services\Auth\RoleOnboardingService;
+use App\Services\Admin\AdminAlertService;
+use App\Services\Admin\AdminInsightService;
+use App\Services\Admin\ForecastService;
+use App\Services\Admin\InventoryIntelligenceService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
@@ -589,5 +593,23 @@ class AdminManagementController extends Controller
         );
 
         return back()->with('status', 'Report schedule updated.');
+    }
+
+    public function runIntelligenceNow(
+        AdminInsightService $insightService,
+        ForecastService $forecastService,
+        AdminAlertService $alertService,
+        InventoryIntelligenceService $inventoryService
+    ): RedirectResponse {
+        $insights = $insightService->generate();
+        $insightService->persist($insights);
+
+        $forecastService->persist('revenue', $forecastService->generateRevenueForecast());
+        $forecastService->persist('user_growth', $forecastService->generateUserGrowthForecast());
+
+        $alertService->run();
+        $inventoryService->run();
+
+        return back()->with('status', 'Intelligence engines executed successfully.');
     }
 }

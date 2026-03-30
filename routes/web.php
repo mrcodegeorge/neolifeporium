@@ -40,7 +40,6 @@ Route::middleware('guest')->group(function () {
 
 Route::middleware('auth')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout'])->name('logout');
-    Route::post('/impersonation/leave', [AdminManagementController::class, 'leaveImpersonation'])->name('impersonation.leave');
     Route::get('/my-dashboard', [RoleController::class, 'redirectDashboard'])->name('dashboard.redirect');
     Route::get('/roles/choose', [RoleController::class, 'choose'])->name('roles.choose');
     Route::post('/roles/switch', [RoleController::class, 'switch'])->name('roles.switch');
@@ -107,14 +106,8 @@ Route::middleware(['auth', 'role:vendor,admin,super_admin'])->prefix('/vendor-pa
     Route::delete('/{product}', [VendorProductController::class, 'destroy'])->name('destroy');
 });
 
-Route::middleware(['auth', 'role:admin,super_admin'])->prefix('/admin-panel')->name('admin.')->group(function () {
+Route::middleware(['auth', 'role:admin,super_admin', 'audit.admin'])->prefix('/admin-panel')->name('admin.')->group(function () {
     Route::get('/export/orders', [AdminManagementController::class, 'exportOrdersCsv'])->name('export.orders');
-    Route::get('/export/users', [AdminManagementController::class, 'exportUsersCsv'])->name('export.users');
-    Route::get('/export/payments', [AdminManagementController::class, 'exportPaymentsCsv'])->name('export.payments');
-    Route::post('/broadcast', [AdminManagementController::class, 'broadcastNotification'])->name('broadcast');
-    Route::post('/automation-rules', [AdminManagementController::class, 'updateAutomationRules'])->name('automation.rules');
-    Route::post('/reporting/schedule', [AdminManagementController::class, 'updateReportSchedule'])->name('reporting.schedule');
-    Route::post('/users/{user}/impersonate', [AdminManagementController::class, 'impersonate'])->name('users.impersonate');
     Route::get('/settings', [AdminSettingsController::class, 'index'])->name('settings');
     Route::patch('/settings', [AdminSettingsController::class, 'updatePlatformSettings'])->name('settings.update');
     Route::post('/staff', [AdminSettingsController::class, 'storeStaff'])->name('staff.store');
@@ -125,11 +118,8 @@ Route::middleware(['auth', 'role:admin,super_admin'])->prefix('/admin-panel')->n
     Route::get('/products', [AdminManagementController::class, 'products'])->name('products');
     Route::patch('/users/{user}/status', [AdminManagementController::class, 'updateUserStatus'])->name('users.status');
     Route::patch('/vendors/{vendorProfile}/status', [AdminManagementController::class, 'updateVendorStatus'])->name('vendors.status');
-    Route::patch('/vendors/{vendorProfile}/inputs', [AdminManagementController::class, 'updateVendorInputs'])->name('vendors.inputs');
     Route::patch('/experts/{agronomistProfile}/status', [AdminManagementController::class, 'updateExpertStatus'])->name('experts.status');
-    Route::patch('/experts/{agronomistProfile}/inputs', [AdminManagementController::class, 'updateExpertInputs'])->name('experts.inputs');
     Route::patch('/products/{product}/moderate', [AdminManagementController::class, 'moderateProduct'])->name('products.moderate');
-    Route::patch('/products/{product}/inputs', [AdminManagementController::class, 'updateProductInputs'])->name('products.inputs');
     Route::patch('/products/{product}/feature', [AdminManagementController::class, 'toggleFeaturedProduct'])->name('products.feature');
     Route::patch('/payments/{payment}/verify', [AdminManagementController::class, 'markPaymentVerified'])->name('payments.verify');
     Route::patch('/bookings/{booking}/status', [AdminManagementController::class, 'updateBookingStatus'])->name('bookings.status');
