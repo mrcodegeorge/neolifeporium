@@ -328,28 +328,28 @@ class DashboardAnalyticsService
                 failedPayments24h: $failedPayments24h
             ),
             'ai_insights' => AdminInsight::query()
-                ->latest('generated_at')
+                ->latest('observed_at')
                 ->limit(8)
                 ->get(),
             'alerts' => AdminAlert::query()
-                ->where('status', 'open')
-                ->orderByDesc('triggered_at')
+                ->whereNull('resolved_at')
+                ->orderByDesc('created_at')
                 ->limit(10)
                 ->get(),
             'inventory_flags' => InventoryFlag::query()
                 ->with('product:id,name', 'vendor:id,name')
                 ->whereNull('resolved_at')
-                ->orderByDesc('created_at')
+                ->orderByDesc('detected_at')
                 ->limit(10)
                 ->get(),
             'forecasts' => [
                 'revenue' => ForecastSnapshot::query()
-                    ->where('metric', 'revenue')
-                    ->latest('generated_for_date')
+                    ->where('type', 'revenue')
+                    ->latest('generated_at')
                     ->first(),
                 'user_growth' => ForecastSnapshot::query()
-                    ->where('metric', 'user_growth')
-                    ->latest('generated_for_date')
+                    ->where('type', 'user_growth')
+                    ->latest('generated_at')
                     ->first(),
             ],
         ];

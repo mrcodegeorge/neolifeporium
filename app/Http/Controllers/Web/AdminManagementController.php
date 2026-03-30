@@ -25,6 +25,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Session;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\View\View;
 
@@ -174,6 +175,37 @@ class AdminManagementController extends Controller
         $user->update(['status' => $payload['status']]);
 
         return back()->with('status', 'User status updated.');
+    }
+
+    public function impersonateUser(User $user): RedirectResponse
+    {
+        if ((int) $user->id === (int) Auth::id()) {
+            return back()->withErrors(['impersonate' => 'You cannot impersonate yourself.']);
+        }
+
+        $currentId = (int) Auth::id();
+        Session::put('admin_impersonator_id', $currentId);
+        Auth::login($user);
+
+        return redirect()->route('dashboard.redirect')->with('status', 'Impersonation started.');
+    }
+
+    public function stopImpersonate(): RedirectResponse
+    {
+        $adminId = Session::pull('admin_impersonator_id');
+        if (! $adminId) {
+            return redirect()->route('admin.panel')->with('status', 'Impersonation session cleared.');
+        }
+
+        $admin = User::query()->find($adminId);
+        if (! $admin) {
+            Auth::logout();
+            return redirect()->route('login')->withErrors(['impersonate' => 'Original admin account not found.']);
+        }
+
+        Auth::login($admin);
+
+        return redirect()->route('admin.panel')->with('status', 'Returned to admin session.');
     }
 
     public function updateVendorStatus(Request $request, VendorProfile $vendorProfile): RedirectResponse

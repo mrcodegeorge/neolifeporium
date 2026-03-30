@@ -7,6 +7,7 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use PDO;
 use Throwable;
 
@@ -131,12 +132,43 @@ class InstallService
     public function runMigrations(bool $seed = false): array
     {
         try {
-            Artisan::call('migrate', ['--force' => true]);
+            @set_time_limit(0);
+            @ini_set('max_execution_time', '0');
+
+            if (! Schema::hasTable('migrations')) {
+                Artisan::call('migrate:install');
+            }
             $output = Artisan::output();
 
-            if ($seed) {
-                Artisan::call('db:seed', ['--force' => true]);
+            $hasUsersTable = Schema::hasTable('users');
+
+            if ($hasUsersTable) {
+                $migrationPaths = [];
+
+                if (! Schema::hasTable('admin_insights') && file_exists(base_path('database/migrations/2026_03_30_000000_create_admin_intelligence_tables.php'))) {
+                    $migrationPaths[] = 'database/migrations/2026_03_30_000000_create_admin_intelligence_tables.php';
+                }
+
+                if (! Schema::hasTable('payments') && file_exists(base_path('database/migrations/2026_03_25_113200_create_payments_table.php'))) {
+                    $migrationPaths[] = 'database/migrations/2026_03_25_113200_create_payments_table.php';
+                }
+
+                if ($migrationPaths === []) {
+                    $output .= PHP_EOL.'Existing database detected. Skipped full migration.';
+                } else {
+                    foreach ($migrationPaths as $path) {
+                        Artisan::call('migrate', ['--force' => true, '--path' => $path]);
+                        $output .= PHP_EOL.Artisan::output();
+                    }
+                }
+            } else {
+                Artisan::call('migrate', ['--force' => true]);
                 $output .= PHP_EOL.Artisan::output();
+
+                if ($seed) {
+                    Artisan::call('db:seed', ['--force' => true]);
+                    $output .= PHP_EOL.Artisan::output();
+                }
             }
 
             return ['ok' => true, 'message' => trim($output)];
